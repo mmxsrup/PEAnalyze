@@ -101,6 +101,38 @@ struct IMAGE_SECTION_HEADER {
 	uint32_t Characteristics; // (0x00000040)セクションに初期化されたデータが含まれている
 };
 
+struct IMAGE_RESOURCE_DIRECTORY {
+	uint32_t Characteristics;
+	uint32_t TimeDateStamp;
+	uint16_t MajorVersion;
+	uint16_t MinorVersion;
+	uint16_t NumberOfNamedEntries; // IMAGE_RESOURCE_DIRECTORY_ENTRY構造体の数
+	uint16_t NumberOfIdEntries; // IMAGE_RESOURCE_DIRECTORY_ENTRY構造体の数
+//  IMAGE_RESOURCE_DIRECTORY_ENTRY DirectoryEntries[];
+};
+struct IMAGE_RESOURCE_DIRECTORY_ENTRY {
+	union {
+		struct {
+			uint32_t NameOffset:31;
+			uint32_t NameIsString:1;
+		};
+		uint32_t Name;
+		uint16_t Id;
+	};
+	union {
+		uint32_t OffsetToData;
+		struct {
+			uint32_t OffsetToDirectory:31;
+			uint32_t DataIsDirectory:1;
+		};
+	};
+};
+struct IMAGE_RESOURCE_DATA_ENTRY {
+	uint32_t OffsetToData;
+	uint32_t Size;
+	uint32_t CodePage;
+	uint32_t Reserved;
+};
 
 void Print_IMAGE_DOS_HEADER(IMAGE_DOS_HEADER *data){
 	printf("e_magic: %x\n", data->e_magic); //文字列として入力されるのものは出力がおかしい
@@ -125,9 +157,32 @@ void Print_IMAGE_NT_HEADERS32(IMAGE_NT_HEADERS32 *data){
 }
 void Print_IMAGE_SECTION_HEADER(IMAGE_SECTION_HEADER *data){
 	printf("Name: %s\n", data->Name);
+	printf("VirtualAddress: %x\n", data->VirtualAddress);
 	printf("SizeOfRawData: %x\n", data->SizeOfRawData);
 	printf("PointerToRawData; %x\n", data->PointerToRawData);
 	printf("Characteristics %x\n", data->Characteristics);
+}
+void Print_IMAGE_RESOURCE_DIRECTORY(IMAGE_RESOURCE_DIRECTORY *data){
+	printf("NumberOfNamedEntries %x\n", data->NumberOfNamedEntries);
+	printf("NumberOfIdEntries %x\n", data->NumberOfIdEntries);
+}
+void Print_IMAGE_RESOURCE_DIRECTORY_ENTRY(IMAGE_RESOURCE_DIRECTORY_ENTRY *data){
+	// printf("Name %x\n", data->Name);
+	printf("Id %x\n", data->Id);
+	printf("OffsetToData %x\n", data->OffsetToData);
+	// printf("OffsetToDirectory:31 %x\n", data->OffsetToDirectory:31);
+	// printf("DataIsDirectory:1 %x\n", data->DataIsDirectory:1);
+}
+
+void Print_IMAGE_RESOURCE_DATA_ENTRY(IMAGE_RESOURCE_DATA_ENTRY *data, char* &buf){
+	// printf("OffsetToData %x\n", data->OffsetToData);
+	// printf("Size %x\n", data->Size);
+	uint32_t start_addr = 0x1200 + data->OffsetToData - 0x4000;
+	for (int i = start_addr; i < start_addr + data->Size; i++){
+		if((9 <= buf[i] && buf[i] <= 12) || (32 <= buf[i] && buf[i] <= 126))
+			printf("%c", buf[i]);
+	}
+	printf("\n");
 }
 
 int main(int argc, char const *argv[]){
@@ -146,36 +201,39 @@ int main(int argc, char const *argv[]){
 	ifs.read(buf, size);
 
 	IMAGE_DOS_HEADER *PIMAGE_DOS_HEADER = reinterpret_cast<IMAGE_DOS_HEADER *>(buf);
-	Print_IMAGE_DOS_HEADER(PIMAGE_DOS_HEADER);
+	// Print_IMAGE_DOS_HEADER(PIMAGE_DOS_HEADER);
 
 	IMAGE_NT_HEADERS32 *PIMAGE_NT_HEADERS32 = 
 	reinterpret_cast<IMAGE_NT_HEADERS32 *>(buf + PIMAGE_DOS_HEADER->e_lfnew);
-	Print_IMAGE_NT_HEADERS32(PIMAGE_NT_HEADERS32);
+	// Print_IMAGE_NT_HEADERS32(PIMAGE_NT_HEADERS32);
 
-	printf("%p\n", buf);
-	printf("%p\n", PIMAGE_DOS_HEADER);
-	printf("%p\n", PIMAGE_NT_HEADERS32);
-	int sizetype = sizeof(IMAGE_NT_HEADERS32);
-	printf("addr sizetype %d\n", sizetype);
-	// int addr = PIMAGE_NT_HEADERS32 + sizetype;
-	// printf("%p\n", addr);
 	IMAGE_SECTION_HEADER *PIMAGE_SECTION_HEADER = 
 	reinterpret_cast<IMAGE_SECTION_HEADER *>(reinterpret_cast<uintptr_t>(PIMAGE_NT_HEADERS32)
 		+ reinterpret_cast<uintptr_t>(sizeof(IMAGE_NT_HEADERS32)));
 
-	printf("%p\n", PIMAGE_NT_HEADERS32);
-	printf("%p\n", PIMAGE_SECTION_HEADER);
 	int SectionSize = PIMAGE_NT_HEADERS32->FileHeader.NumberOfSections;
-	// printf("SectionSize %d\n", SectionSize);
 	for (int i = 0; i < SectionSize; ++i){
 		Print_IMAGE_SECTION_HEADER(PIMAGE_SECTION_HEADER);
 		PIMAGE_SECTION_HEADER++;
 	}
-	/*
-	for (int i = 0; i < size; ++i){
-		printf("%x", buf[i]);
+
+
+
+	/* .rsrc セクション */
+	IMAGE_RESOURCE_DIRECTORY *PIMAGE_RESOURCE_DIRECTORY = 
+	reinterpret_cast<IMAGE_RESOURCE_DIRECTORY*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(4608));
+	// Print_IMAGE_RESOURCE_DIRECTORY(PIMAGE_RESOURCE_DIRECTORY);
+	int Entry_number = PIMAGE_RESOURCE_DIRECTORY->NumberOfNamedEntries + PIMAGE_RESOURCE_DIRECTORY->NumberOfIdEntries;
+	IMAGE_RESOURCE_DIRECTORY_ENTRY *PIMAGE_RESOURCE_DIRECTORY_ENTRY = 
+		reinterpret_cast<IMAGE_RESOURCE_DIRECTORY_ENTRY*>
+		(reinterpret_cast<uintptr_t>(PIMAGE_RESOURCE_DIRECTORY) + static_cast<uintptr_t>(16));
+	IMAGE_RESOURCE_DATA_ENTRY *PIMAGE_RESOURCE_DATA_ENTRY = 
+		reinterpret_cast<IMAGE_RESOURCE_DATA_ENTRY*>(reinterpret_cast<uintptr_t>(PIMAGE_RESOURCE_DIRECTORY) + static_cast<uintptr_t>(64*Entry_number));
+
+	for (int i = 0; i < Entry_number; ++i){
+		Print_IMAGE_RESOURCE_DATA_ENTRY(PIMAGE_RESOURCE_DATA_ENTRY, buf);
+		PIMAGE_RESOURCE_DATA_ENTRY++;
 	}
-	*/
 	delete[] buf;
 	return 0;
 }

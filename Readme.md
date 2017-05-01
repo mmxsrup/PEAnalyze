@@ -1,6 +1,10 @@
 
 ### 参考文献
 http://tech.blog.aerie.jp/entry/2015/12/23/000000
+http://www.csn.ul.ie/~caolan/pub/winresdump/winresdump/doc/pefile2.html
+
+http://hp.vector.co.jp/authors/VA050396/tech_07.html
+http://blog.goo.ne.jp/hiro239415/e/099cdf2871057187262fee1904c6a38f
 
 ファイルの入出力
 http://cdecrement.blog.fc2.com/blog-entry-65.html
