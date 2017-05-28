@@ -1,0 +1,815 @@
+はじめに, PEファイルについての知識がなかったので, PEファイルの構造がどのようになっているのかを調べることにした. 主に以下のサイトや本が参考になった.
+http://home.a00.itscom.net/hatada/mcc/doc/pe.html
+https://codezine.jp/article/detail/412
+http://tech.blog.aerie.jp/entry/2015/12/23/000000
+http://tech.blog.aerie.jp/entry/2015/12/27/140649
+http://tech.blog.aerie.jp/entry/2015/12/27/144045
+http://www.visualcplusdotnet.com/visualcplusdotnet5.html
+http://www.csn.ul.ie/~caolan/pub/winresdump/winresdump/doc/pefile2.html
+http://hp.vector.co.jp/authors/VA050396/tech_07.html
+リバースエンジニアリングバイブル コード再創造の美学
+
+まず, PEファイルの先頭には, MS-DOS領域があり, これはEXEファイルをMS-DOS 環境で実行した時に, この環境では実行できないというメッセージを表示するためのMS-DOS上で動くプログラムが書いてあることがわかった. 
+MS-DOS領域に記録されているデータは, WinNT.h に, IMAGE_DOS_HEADER という構造体で定義されている. その構造体は以下のようなものである.
+typedef struct _IMAGE_DOS_HEADER {      // DOS .EXE header
+    WORD   e_magic;                     // Magic number
+    WORD   e_cblp;                      // Bytes on last page of file
+    WORD   e_cp;                        // Pages in file
+    WORD   e_crlc;                      // Relocations
+    WORD   e_cparhdr;                   // Size of header in paragraphs
+    WORD   e_minalloc;                  // Minimum extra paragraphs needed
+    WORD   e_maxalloc;                  // Maximum extra paragraphs needed
+    WORD   e_ss;                        // Initial (relative) SS value
+    WORD   e_sp;                        // Initial SP value
+    WORD   e_csum;                      // Checksum
+    WORD   e_ip;                        // Initial IP value
+    WORD   e_cs;                        // Initial (relative) CS value
+    WORD   e_lfarlc;                    // File address of relocation table
+    WORD   e_ovno;                      // Overlay number
+    WORD   e_res[4];                    // Reserved words
+    WORD   e_oemid;                     // OEM identifier (for e_oeminfo)
+    WORD   e_oeminfo;                   // OEM information; e_oemid specific
+    WORD   e_res2[10];                  // Reserved words
+    LONG   e_lfanew;                    // File address of new exe header
+} IMAGE_DOS_HEADER, *PIMAGE_DOS_HEADER;
+この中で重要なメンバは, e_magicとe_lfanewである.
+e_magicには 4a 5a (MZ) が記録されていて, MZという文字列でPEファイルの開始位置を知ることができ, さらにバイナリファイルがPEファイルであるのかのチェックに使うことができる. 
+e_lfanewは MS-DOS 領域の後に来る IMAGE_NT_HEADER 構造体の位置 (実際に使用するPEファイルのオフセット)を知るために使うことができる. 
+実際 MS-DOS 領域をあたえられたバイナリファイルで見てみると, 
+00000000: 4d5a 9000 0300 0000 0400 0000 ffff 0000  MZ..............
+00000010: b800 0000 0000 0000 4000 0000 0000 0000  ........@.......
+00000020: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000030: 0000 0000 0000 0000 0000 0000 8000 0000  ................
+00000040: 0e1f ba0e 00b4 09cd 21b8 014c cd21 5468  ........!..L.!Th
+00000050: 6973 2070 726f 6772 616d 2063 616e 6e6f  is program canno
+00000060: 7420 6265 2072 756e 2069 6e20 444f 5320  t be run in DOS 
+00000070: 6d6f 6465 2e0d 0d0a 2400 0000 0000 0000  mode....$.......
+以上のようになっており, ファイルの先頭の2byteは, 4d5a となっている. また e_lfanew の位置である4byteの部分は 8000 0000 となっており, リトルエンディアンで見ると, 0x00000080となっていることがわかる. 
+
+次に来る領域は, NTヘッダーである. この領域からが実際のPEファイルの情報が記録されている.
+この領域を表す構造体は, WinNT.h に IMAGE_NT_HEADERS とい構造体で定義されている. (https://msdn.microsoft.com/ja-jp/library/windows/desktop/ms680336(v=vs.85).aspx)
+その構造体は以下のようなものである.
+typedef struct _IMAGE_NT_HEADERS {
+ 	DWORD                 Signature;
+	IMAGE_FILE_HEADER     FileHeader;
+	IMAGE_OPTIONAL_HEADER OptionalHeader;
+} IMAGE_NT_HEADERS, *PIMAGE_NT_HEADERS;
+この構造体は3つのメンバーからなり, 1つ目の Signature は, PE\0\0 という値が入っている. IMAGE_DOS_HEADER から NTヘッダーの位置がわかるので, この値は実際には使われない. しかし, 課題のバイナリファイルの Signature を変更すると実行できなかった.
+これは, PEファイルのはずなのに Signature が正規の値となっておらず, 何らかの原因で改ざんされた恐れがあるので, OSが実行を抑制したと考えられる.
+実際に課題のバイナリファイルを確認すると, 
+00000080: 5045 0000 PE..
+となっており, 50450000 となっている. また上のe_lfnanewの値から読み取った通りに0x80から始まっている.
+
+2つ目の FileHeader は, IMAGE_FILE_HEADER 構造体である. これはWinNT.hに定義されていて, 以下のような構造体である.(https://msdn.microsoft.com/ja-jp/library/windows/desktop/ms680313(v=vs.85).aspx)
+typedef struct _IMAGE_FILE_HEADER {
+	WORD  Machine;
+	WORD  NumberOfSections;
+	DWORD TimeDateStamp;
+  	DWORD PointerToSymbolTable;
+ 	DWORD NumberOfSymbols;
+  	WORD  SizeOfOptionalHeader;
+  	WORD  Characteristics;
+} IMAGE_FILE_HEADER, *PIMAGE_FILE_HEADER;
+MachineはバイナリファイルがどのCPUアーキテクチャで実行できるかを表します. x86なら0x014c, x64なら0x8664となっている.
+NumberOfSections は, バイナリファイルに含まれるセクションの数を表す. PEファイルのセクションは主に, .text, .rdata, .data, .rsrc などがある.
+TimeDateStamp はバイナリファイルをビルドした時間を表す. 時刻を表す形式は32bitのUnix時刻である.
+PointerToSymbolTable, NumberOfSymbols は, PEファイルがシンボルテーブルを含まないことから 0 が記録されている.
+SizeOfOptionalHeader は, FileHeader の次に続くIMAGE_OPTIONAL_HEADER のサイズは, OSによってサイズが変わってくる場合があるので, ファイルごとに大きさを記録し, ローダーがFileHeaderのサイズを知ることができるようにしている.
+Characteristics には, ファイルヘッダの特性を表す値が入っている. 特性を表すフラグの値を組み合わせた値でファイルがどのような形式であるかがわかる.
+実際に課題のバイナリファイルを確認すると以下の部分である.
+00000084: 4c01 0300 b07f dc58 0000 0000
+00000090: 0000 0000 e000 0201
+Machiineは0x014cとなっており, 64bit用のバイナリファイルであることがわかる. 
+NumberOfSectionsは0x03となっていて, セクションの数が3つであることがわかる. 
+TimeDateStamp は, 0x58dc7fb0 となっており, これをUnixtimeに変換すると, 2017-03-30T12:46:56+09:00 となる.
+SizeOfOptionalHeader は, 0xe0となっており, FileHeader のサイズが0xe0であることがわかる.
+Characteristics は, 0x0102となっており,
+値が0x0100の時, IMAGE_FILE_32BIT_MACHINE
+値が0x0002の時, IMAGE_FILE_EXECUTABLE_IMAGE
+のフラグが立っていることから, このファイルが32bitアーキテクチャをサポートしていて, このファイルが実行ファイルであることがわかる.
+https://msdn.microsoft.com/ja-jp/library/windows/desktop/ms680313(v=vs.85).aspx
+このサイトの下部にフラグの詳細情報がある.
+
+3つ目のOptionalHeaderは, IMAGE_OPTIONAL_HEADER 構造体である. これは, WinNT.h で定義されていて, 以下のような構造体である. (https://msdn.microsoft.com/ja-jp/library/windows/desktop/ms680339(v=vs.85).aspx)
+typedef struct _IMAGE_OPTIONAL_HEADER {
+ 	WORD                 Magic;
+  	BYTE                 MajorLinkerVersion;
+  	BYTE                 MinorLinkerVersion;
+  	DWORD                SizeOfCode;
+  	DWORD                SizeOfInitializedData;
+  	DWORD                SizeOfUninitializedData;
+  	DWORD                AddressOfEntryPoint;
+  	DWORD                BaseOfCode;
+  	DWORD                BaseOfData;
+  	DWORD                ImageBase;
+  	DWORD                SectionAlignment;
+  	DWORD                FileAlignment;
+  	WORD                 MajorOperatingSystemVersion;
+  	WORD                 MinorOperatingSystemVersion;
+  	WORD                 MajorImageVersion;
+  	WORD                 MinorImageVersion;
+  	WORD                 MajorSubsystemVersion;
+  	WORD                 MinorSubsystemVersion;
+  	DWORD                Win32VersionValue;
+  	DWORD                SizeOfImage;
+  	DWORD                SizeOfHeaders;
+  	DWORD                CheckSum;
+  	WORD                 Subsystem;
+  	WORD                 DllCharacteristics;
+  	DWORD                SizeOfStackReserve;
+  	DWORD                SizeOfStackCommit;
+  	DWORD                SizeOfHeapReserve;
+  	DWORD                SizeOfHeapCommit;
+  	DWORD                LoaderFlags;
+  	DWORD                NumberOfRvaAndSizes;
+  	IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
+} IMAGE_OPTIONAL_HEADER, *PIMAGE_OPTIONAL_HEADER;
+Magicは32bitアプリケーションの場合は0x10bが入り, 64bitの場合は0x20bが入る. 
+MajorLinkerVersion, MinorLinkerVersion はリンカのバージョンを表している.
+SizeOfCodeはコードセクションの領域のサイズを表している.
+SizeOfInitializedDataとSizeOfUninitializedDataは初期化済みデータ領域のサイズと, 未初期化データ領域のサイズを表している. 未初期化データセクションはファイルには含まれないので, SizeOfUninitializedDataはPEファイルがロードされるときにメモリ上に確保されるべきサイズを表している.
+AddressOfEntryPointは実行ファイルがメモリ上で開始するアドレスで, エントリポイントを表さいている. このアドレスは相対仮想アドレス(RVA)で表されており, 実際のアドレスからImageBaseを引いいた値を示している.
+BaseOfCodeはコードセクションの開始位置を表し, RVAで記録されている. ImageBaseはPEファイル全体の開始アドレスであり, コード領域が開始されるアドレスは, ImageBase + BaseOfCode で表される.
+BaseOfData は初期化済みデータセクションの開始位置を表し, RVAで記録されている.
+ImageBase はファイルが実行されるときに実際に仮想メモリにロードされるアドレスを示す. 
+SectionAlignment は各セクションをメモリ上にロードするときのどのようにアドレスに配置するかを示している. この値が0x1000の時, 例えば .textのサイズが0x800バイトで, 次に.rdataセクションが続くとする. このとき, .radataセクションが0x800バイトから始まるのでなく, 0x800からの0x200バイトを0x00で埋めることになり, .radataセクションは0x1000から始まる. (セクションヘッダーにより各セクションの位置はわかる)
+FileAlignment はファイル上で各セクションをどのように配置するかを占めている.
+SizeOfImage は PEファイルがメモリにロードされる時の全体のサイズである. ローダはこの値を見て, 領域を確保している.
+SizeOfHeaders はPEファイル上のすべてのヘッダサイズの合計.
+Subsystem はプログラムがGUI用かコンソール用かを示している. 0x2の場合Windows GUIアプリケーションで, 0x3の場合WindowsConsoleアプリケーションであることを示している.
+NumberOfRvaAndSizes データディレクトリの数を示す.
+DataDirectory はIMAGE_DATA_DIRECTORY構造体の配列になっていて, 配列の要素数は, NumberOfRvaAndSizesで示されている. 
+実際に課題のバイナリファイルで確認していく.
+00000098: 0b01 0800 0010 0000
+000000a0: 0008 0000 0000 0000 6e2e 0000 0020 0000
+000000b0: 0040 0000 |0000 4000 0020 0000 0002 0000 (|からImageBase)
+000000c0: 0400 0000 0000 0000 0400 0000 0000 0000
+000000d0: |0080 0000 0002 0000 0000 0000 0300 4085 (|からSizeOfImage)
+000000e0: 0000 1000 0010 0000 0000 1000 0010 0000
+000000f0: 0000 0000 1000 0000 0000 0000 0000 0000
+Magicは0x01b0であり, 32bit用のファイルであることがわかる. SizeOfCodeは0x1000であり, コードセクションのサイズが0x1000であることがわかる. SizeOfInitializedDataは0x0800である.
+AddressOfEntryPointは0x2e64, BaseOfCodeは0x2000, BaseOfDataは0x4000, ImageBaseが0x400000である. これらより, エントリポイントが0x402e64であることがわかる.
+SectionAlignmentは0x2000であり, FileAlignmentは0x0200である.
+SizeOfImageは0x8000, SizeOfHeadersは0x0200である.
+Subsystemは0x03でありCUIアプリケーションであることがわかる.
+NumberOfRvaAndSizesは0x10なので, IMAGE_DATA_DIRECTORYの数が0x10である.
+
+次に, DataDirectory[]であるが, これは IMAGE_DATA_DIRECTORY 構造体の配列で, 2つのメンバをもち, エクスポートディレクトリまたはインポートディレクトリ, リソースディレクトリ, IATなど, それぞれの仮想アドレスとサイズを情報として持つテーブルがNumberOfRvaAndSizesの数だけ記録されている. その構造体は WinNT.h で定義されていて以下のようなものである. (https://msdn.microsoft.com/ja-jp/library/windows/desktop/ms680305(v=vs.85).aspx)
+typedef struct _IMAGE_DATA_DIRECTORY {
+	DWORD VirtualAddress;
+	DWORD Size;
+} IMAGE_DATA_DIRECTORY, *PIMAGE_DATA_DIRECTORY;
+VirtualAddress はロードされたイメージの先頭からの相対アドレスを表す. つまり, 実際にメモリ上にロードされる時の仮想アドレスは, ImageBase + VirtualAddress で求まることになる.
+Size はデータのサイズを表す.
+この構造体の配列は何番目の要素かで指しているデータの意味が変わってくる.
+
+NTヘッダーの次には, セクションヘッダーが続く. このヘッダーは主に各セクションの名前, 開始アドレス, サイズなどの情報を管理する構造体がIMAGE_FILE_HEADERの NumberOfSections で記録されている数だけ記録されている. その構造体は, IMAGE_SECTION_HEADERで, WinNT.hで定義されていて, 以下のようなものである.(https://msdn.microsoft.com/ja-jp/library/windows/desktop/ms680341(v=vs.85).aspx)
+typedef struct _IMAGE_SECTION_HEADER {
+	BYTE  Name[IMAGE_SIZEOF_SHORT_NAME];
+	union {
+		DWORD PhysicalAddress;
+    	DWORD VirtualSize;
+    } Misc;
+  	DWORD VirtualAddress;
+  	DWORD SizeOfRawData;
+  	DWORD PointerToRawData;
+  	DWORD PointerToRelocations;
+  	DWORD PointerToLinenumbers;
+  	WORD  NumberOfRelocations;
+  	WORD  NumberOfLinenumbers;
+  	DWORD Characteristics;
+} IMAGE_SECTION_HEADER, *PIMAGE_SECTION_HEADER;
+Nameは.textや.dataなどのセクション名が記録されている.
+PhysicalAddressはファイル上のアドレスを表す.
+VirtualSizeはファイルがメモリ上にロードされた時にこのセクションが占めるメモリ上のサイズを表す.
+VirtualAddressはファイルがメモリ上にロードされる時に, このセクションのロードされる位置.
+SizeOfRawDataはこのセクションのファイル中でのサイズ.
+PointerToRawDataはこのセクションのファイル中での位置.
+DWORD Characteristics はこのセクションの特性を表すフラグの組み合わせが記録されている.
+実際に課題のバイナリファイルで確認してみる. NumberOfSections の数は0x3だったので3つ存在する.
+1目のセクションヘッダーは以下の通りである.
+00000178: 2e74 6578 7400 0000
+00000180: 740e 0000 0020 0000 0010 0000 0002 0000
+00000190: 0000 0000 0000 0000 0000 0000 2000 0060
+Nameは0x2e746578740000 で .text\0 を表している.
+SizeOfRawDataは 0x1000 である.
+PointerToRawDataは 0x0200 である.
+Characteristics は 0x60000020 であるので, 実行可能なコードが含まれていることを示している. 調べてみたが, 0x60000000を表すFlagに関する情報はなかった.
+2つ目のセクションヘッダーは以下の通りである.
+000001a0: 2e72 7372 6300 0000 9005 0000 0040 0000
+000001b0: 0006 0000 0012 0000 0000 0000 0000 0000
+000001c0: 0000 0000 4000 0040
+Nameは0x2e727372 で .rsrc\0 を表している.
+VirtualAddressは 0x4000
+SizeOfRawDataは 0x0600 である.
+PointerToRawDataは 0x1200 である.
+Characteristics は 0x40000040 であるので, 初期化済みデータがふくまれていて, メモリ上で読み取り可能なセクションであることを表している.
+3つ目のセクションヘッダーは以下の通りである. 
+000001c8: 2e72 656c 6f63 0000
+000001d0: 0c00 0000 0060 0000 0002 0000 0018 0000
+000001e0: 0000 0000 0000 0000 0000 0000 4000 0042
+Nameは0x2e72656c で .reloc\0 を表している.
+SizeOfRawDataは 0x0200 である.
+PointerToRawDataは 0x1800 である.
+Characteristics は 0x42000040 であるので, 初期化済みデータがふくまれていて, メモリ上で破棄可能とされ, 読み取り可能なセクションであることを表している.
+
+
+.textセクションについては以下のサイトが参考になった.
+http://urasandesu.blogspot.jp/2011/09/11-hello-world-basics-of-cli-begun-with.html
+http://www.ntcore.com/files/dotnetformat.htm
+.textセクションにはまず,  Import Address Table(IAT) RVAsがあり, インポートするメソッドを表す Hint/Name Table への RVAs が格納されている.
+課題のバイナリファイルだと, 00000200: 502e 0000 0000 0000 の部分に相当する.
+次に, CLIヘッダが続く. これはCLRのためのヘッダーであり, IMAGE_COR20_HEADER 構造体として以下のように定義されている.
+typedef struct IMAGE_COR20_HEADER
+{
+    DWORD                   cb;              
+    WORD                    MajorRuntimeVersion;
+    WORD                    MinorRuntimeVersion;
+    IMAGE_DATA_DIRECTORY    MetaData;        
+    DWORD                   Flags;           
+    union {
+        DWORD               EntryPointToken;
+        DWORD               EntryPointRVA;
+    };
+    IMAGE_DATA_DIRECTORY    Resources;
+    IMAGE_DATA_DIRECTORY    StrongNameSignature;
+    IMAGE_DATA_DIRECTORY    CodeManagerTable;
+    IMAGE_DATA_DIRECTORY    VTableFixups;
+    IMAGE_DATA_DIRECTORY    ExportAddressTableJumps;
+    IMAGE_DATA_DIRECTORY    ManagedNativeHeader;
+} IMAGE_COR20_HEADER, *PIMAGE_COR20_HEADER;
+cbはヘッダのサイズ(sizeof(IMAGE_COR20_HEADER))を表します. MetaDataは後述するメタデータへのRVAとサイズが IMAGE_DATA_DIRECTORY 構造体を利用して記録されている. Resourcesはリソースの情報がIMAGE_DATA_DIRECTORY 構造体を利用して記録されている.
+課題のバイナリファイルで確認すると以下のようになっている.
+00000208: 4800 0000 0200 0500
+00000210: 5822 0000 240b 0000 0300 0000 0100 0006
+00000220: 2821 0000 2f01 0000 0000 0000 0000 0000
+00000230: 0000 0000 0000 0000 0000 0000 0000 0000
+00000240: 0000 0000 0000 0000 0000 0000 0000 0000
+cbが0x48. MetadataのRVAが0x2258, Sizeが0x012fとなる. 実際のファイル上でのオフセットを求めるには, RVA + Pointtorawdata(.text) - virtualAddress(.text) で求まるので, 0x2258 + 0x200 - 0x2000 = 0x458 となり, 0x458から0x012f byteがMetadataの該当箇所になる.
+リソースのRVAが0x2128, Sizeが0x012fとなる. ファイル上でのオフセットは, 0x2128 + 0x200 - 0x2000 = 0x328 となり, 0x328からの 0x12f byteがリソースの情報が格納されているとわかる.
+実際にリソースの部分を課題のバイナリファイルで確認してみると, 以下のようになっており, コード中で使われている文字列などが入っている.
+00000328: 2b01 0000 ceca efbe 					   +.......
+00000330: 0100 0000 9100 0000 6c53 7973 7465 6d2e  ........lSystem.
+00000340: 5265 736f 7572 6365 732e 5265 736f 7572  Resources.Resour
+00000350: 6365 5265 6164 6572 2c20 6d73 636f 726c  ceReader, mscorl
+00000360: 6962 2c20 5665 7273 696f 6e3d 342e 302e  ib, Version=4.0.
+00000370: 302e 302c 2043 756c 7475 7265 3d6e 6575  0.0, Culture=neu
+00000380: 7472 616c 2c20 5075 626c 6963 4b65 7954  tral, PublicKeyT
+00000390: 6f6b 656e 3d62 3737 6135 6335 3631 3933  oken=b77a5c56193
+000003a0: 3465 3038 3923 5379 7374 656d 2e52 6573  4e089#System.Res
+000003b0: 6f75 7263 6573 2e52 756e 7469 6d65 5265  ources.RuntimeRe
+000003c0: 736f 7572 6365 5365 7402 0000 0003 0000  sourceSet.......
+000003d0: 0000 0000 0050 4144 5041 4450 6113 8282  .....PADPADPa...
+000003e0: 6213 8282 6313 8282 0000 0000 1300 0000  b...c...........
+000003f0: 2600 0000 0501 0000 0e53 0074 0072 0069  &........S.t.r.i
+00000400: 006e 0067 0031 0000 0000 000e 5300 7400  .n.g.1......S.t.
+00000410: 7200 6900 6e00 6700 3200 0e00 0000 0e53  r.i.n.g.2......S
+00000420: 0074 0072 0069 006e 0067 0033 0019 0000  .t.r.i.n.g.3....
+00000430: 0001 0c48 656c 6c6f 2077 6f72 6c64 2101  ...Hello world!.
+00000440: 0968 6f67 6520 6675 6761 010b 7374 7269  .hoge fuga..stri
+00000457: 6e67 2074 6573 7400 					   ng test.
+
+次に, メタデータについて説明する. まず, メタデータルートは Signature 0x424a5342 から始まる可変長領域である. LengthとVirsionという領域があり, Lengthで表された領域のサイズだけVirsionのサイズが確保される. Streamsという値が記録されており, この後に続くストリームの数がわかる.
+実際に課題のバイナリで確認してみると,以下のようになっている.
+00000458: 4253 4a42 0100 0100 					   BSJB....
+00000460: 0000 0000 0c00 0000 7634 2e30 2e33 3033  ........v4.0.303
+00000470: 3139 0000 0000 0500                      19......l...x...
+Siognatureは0x424a5342となっていて, Lengthが0xcとなっており, Streamsが0x5でストリームが5つ続くことがわかる.
+
+まず, Streamsで指定された数だけのストリームヘッダが続く. ストリームヘッダの種類は#~ストリーム, #String ヒープヘッダ, #USヒープヘッダ, #GUIDヒープヘッダ, #Boldヒープヘッダがある. 各ストリームヘッダは Offset, Sizem, Name という固定長領域で表される. Offsetはこのヘッダのストリーム開始位置のオフセットを表しており, それはメタデータルートの先頭からのオフセットである.
+文字列型リソースに関わってくるメタデータストリームは, #Stringsヒープと, #USヒープである.
+#Stringsには各メタデータテーブルで扱う文字列(アセンブリ名, メソッド名)が格納されている. 可変長のNULL終端UTF-8文字列が記録されている.
+#US にはプログラム中で使う固定文字列が格納されている. 
+実際のバイナリファイルで確認すると, メタデータルートは であり, Stringsヘッダーは以下のようである.
+00000484: e403 0000 d004 0000
+Offset 0x03e4, Size 0x04d0 となり, Stringsストリームのファイル上でのオフセットは 0x458 + 0x03e4 = 0x83c となる.
+00000498: b408 0000 8400 0000
+Offset 0x08b4, Size 0x84 となり, USストリームのファイル上でのオフセットは 0x458 + 0x08b4 = 0xD0C となる.
+
+
+.rsrcセクションで使われている構造体を見ていく. 
+以下のサイトが参考になった.
+http://www.cnblogs.com/shangdawei/p/4785494.html
+http://narazaka.blog109.fc2.com/blog-entry-186.html?sp
+http://blog.goo.ne.jp/hiro239415/e/099cdf2871057187262fee1904c6a38f
+https://codezine.jp/article/detail/413?p=3
+
+まず, IMAGE_RESOURCE_DIRECTORY が現れる. その構造体は以下のように定義さている.
+typedef struct _IMAGE_RESOURCE_DIRECTORY {
+    DWORD   Characteristics;
+    DWORD   TimeDateStamp;
+    WORD    MajorVersion;
+    WORD    MinorVersion;
+    WORD    NumberOfNamedEntries;
+    WORD    NumberOfIdEntries;
+} IMAGE_RESOURCE_DIRECTORY, *PIMAGE_RESOURCE_DIRECTORY;
+ここでは2つのディレクトリエントリ長を持つ. 一つは, この構造体の直下から始まる名前つきエントリー数をNumberOfNamedEntriesが表し, IDつきエントリー数を表している.
+
+IMAGE_RESOURCE_DIRECTORY_ENTRY構造体は, 以下のような構造体である.
+typedef struct _IMAGE_RESOURCE_DIRECTORY_ENTRY {
+    union {
+        struct {
+            DWORD NameOffset:31;
+            DWORD NameIsString:1;
+        };
+        DWORD   Name;
+        WORD    Id;
+    };
+    union {
+        DWORD   OffsetToData;
+        struct {
+            DWORD   OffsetToDirectory:31;
+            DWORD   DataIsDirectory:1;
+        };
+    };
+} IMAGE_RESOURCE_DIRECTORY_ENTRY, *PIMAGE_RESOURCE_DIRECTORY_ENTRY;
+もし, 実際に文字列型リソースを取得するプログラムを書いていく. DataIsDirectory が立っている場合, その構造体が指す先はまた IMAGE_RESOURCE_DIRECTORY となり, 立っていない場合はIMAGE_RESOURCE_DATA_ENTRYとなる. OffsetToDataはメモリ上の位置(RVA)なので, ファイル上の位置は, OffsetToData + PointerToRawData - VirtualAddress で表される. 
+
+IMAGE_RESOURCE_DATA_ENTRY構造体は, 以下のように定義されている.
+typedef struct _IMAGE_RESOURCE_DATA_ENTRY {
+    DWORD   OffsetToData;
+    DWORD   Size;
+    DWORD   CodePage;
+    DWORD   Reserved;
+} IMAGE_RESOURCE_DATA_ENTRY, *PIMAGE_RESOURCE_DATA_ENTRY;
+この構造体はリソースデータディレクトリツリーのリーフの一つ上の親情報を表している. つまり,  RESOURCE_DIRECTORYの木構造の葉の一つ上の親の部分であり, このノードの子が実際のバイナリデータの位置を指し示している. OffsetToDataとSizeはそれぞれデータの配置されるオフセット(RVA)とサイズバイト数である. 
+
+実際に課題のバイナリファイルで確認していく. .rsrcセクションの SizeOfRawDataは 0x0600, PointerToRawDataは 0x1200 であるので, 0x1200から0x600byteが該当箇所になる. 
+IMAGE_RESOURCE_DIRECTORY は以下のようになっている. 
+00001200: 0000 0000 0000 0000 0000 0000 0000 0200
+NumberOfIdEntriesが0x02なので, idつきエントリが2つあることになり, その後にエントリが2つ続く.
+
+1つ目のidつきエントリは以下のようになっている.
+00001210: 1000 0000 2000 0080
+DataIsDirectoryのbitが立っているので, 次に続く構造体がIMAGE_RESOURCE_DIRECTORYであることがわかり, OffsetToDirectoryが0x20であるので, 次のエントリが 0x1200 + 0x20 = 0x1220 となり, 以下の部分が該当箇所になる.
+00001220: 0000 0000 0000 0000 0000 0000 0000 0100
+これは NumberOfIdEntries が一つなので, この直後にエントリーが1つ続くことがわかる. これに続くエントリの部分が以下のようになっている.
+00001230: 0100 0000 5000 0080
+DataIsDirectoryのbitが立っているので, 次に続く構造体がIMAGE_RESOURCE_DIRECTORYであることがわかり, OffsetToDirectoryが0x50であるので, 次のエントリが 0x1200 + 0x50 = 0x1250 となり, 以下の部分が該当箇所となる. 
+00001250: 0000 0000 0000 0000 0000 0000 0000 0100
+これは NumberOfIdEntries が一つなので, この直後にエントリーが1つ続くことがわかる. これに続くエントリの部分が以下のようになっている.
+00001260: 0000 0000 8000 0000
+DataIsDirectoryのbitが立っていないので, 次に続く構造体がIMAGE_RESOURCE_DATA_ENTRYであることがわかり, OffsetToDirectoryが0x80であるので, 次のエントリが 0x1200 + 0x80 = 0x1280 となり, 以下の部分が該当箇所となる. 
+00001280: a040 0000 0003 0000 0000 0000 0000 0000
+これは OffsetToDataが0x40a0で, Sizeが 0x0300 であるので, 該当箇所は 0x40a0 + 0x1200 - 0x4000 = 0x12a0 からの0x300 byteがバイナリデータの部分であることがわかった.
+
+2つ目のidつきエントリは以下のようになっている.
+1800 0000 3800 0080
+DataIsDirectoryのbitが立っているので, 次に続く構造体がIMAGE_RESOURCE_DIRECTORYであることがわかり, OffsetToDirectoryが0x38であるので, 次のエントリが 0x1200 + 0x38 = 0x1238 となり, 以下の部分が該当箇所になる.
+00001238: 0000 0000 0000 0000 0000 0000 0000 0100
+これは NumberOfIdEntries が一つなので, この直後にエントリーが1つ続くことがわかる. これに続くエントリの部分が以下のようになっている.
+00001248: 0100 0000 6800 0080
+DataIsDirectoryのbitが立っているので, 次に続く構造体がIMAGE_RESOURCE_DIRECTORYであることがわかり, OffsetToDirectoryが0x68であるので, 次のエントリが 0x1200 + 0x68 = 0x1268 となり, 以下の部分が該当箇所となる. 
+00001268: 0000 0000 0000 0000 0000 0000 0000 0100
+これは NumberOfIdEntries が一つなので, この直後にエントリーが1つ続くことがわかる. これに続くエントリの部分が以下のようになっている.
+00001260: 0000 0000 9000 0000
+DataIsDirectoryのbitが立っていないので, 次に続く構造体がIMAGE_RESOURCE_DATA_ENTRYであることがわかり, OffsetToDirectoryが0x90であるので, 次のエントリが 0x1200 + 0x90 = 0x1290 となり, 以下の部分が該当箇所となる. 
+00001290: a043 0000 ea01 0000 0000 0000 0000 0000 
+これは OffsetToDataが0x43a0で, Sizeが 0x01ea であるので, 該当箇所は 0x43a0 + 0x1200 - 0x4000 = 0x15a0 からの0x1ea byteがバイナリデータの部分であることがわかった.
+
+
+PEファイルフォーマットが大まかにわかったので, 実際にString型リソースをバイナリファイルから取り出すプログラムを書いていく.
+バイナリファイルをchar型配列の変数に入れておく. WinNT.hに定義されている構造体を同じように定義しておき, その構造体が置かれている位置を計算して, bufの上にその構造体をかぶせるように変数のポインタを合わせていく. このようにするとポインタを介して構造体のメンバにアクセスできることが可能である. このようにして, MS-DOSヘッダーからe_lfnewの値を読み取ったら, その値をファイルの先頭のアドレスに足せばNTヘッダの先頭アドレスになる. 
+セクションデータはNTヘッダの直後に来るので, 先ほど計算したNTヘッダーの先頭アドレスにsizeof(IMAGE_NT_HEADERS)を足せば求まる.
+セクションの数は, IMAGE_NT_HEADERSのNumberOfSections の数でわかるので, その数だけループしながらそれぞれのセクションを見ていく.
+.textセクションの中で文字列型リソースが入っていると思われるのは, CLIヘッダの中で指定されるResourcesの中とメタデータ中の2箇所が考えられるので, それぞれを処理する. 
+Resourcesのデータは, CLIで指定されるrvaと, .textセクションヘッダで指定される PointerToRawDataとVirtualAddressから rva + PointerToRawData - VirtualAddress という計算式でファイル中の位置がわかるので, そこから文字列型データを抜き取ればいい.
+MetaDataセクションの場合, メタデータルートで指定されただけのストリームを順番に見ていき, ストリームヘッダのNameが"#Strings"と"#US"の場合に文字列型データが含まれる可能性があるので, その場合は文字列型データを抜き取ればいい.
+
+.rsrcセクションの場合, 木構造をなすように情報が記録されているので, 再帰関数PurseRsrcSection()をつかい文字列型リソースが含まれているIMAGE_RESOURCE_DATA_ENTRYまで走査していった. IMAGE_RESOURCE_DIRECTORYの子ノードは IMAGE_RESOURCE_DIRECTORY_ENTRYであり, IMAGE_RESOURCE_DIRECTORY_ENTRYの子ノードはDataIsDirectoryの値によって, IMAGE_RESOURCE_DIRECTORYとIMAGE_RESOURCE_DATA_ENTRYの可能性があり, IMAGE_RESOURCE_DATA_ENTRYの次は実際のバイナリデータが子ノードとして指定されていることを使い関数を作成した.
+実際に書いたプログラムは以下のようになる.
+
+#include <iostream>
+#include <fstream>
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+#define DEBUG
+
+struct IMAGE_DOS_HEADER {
+	uint16_t e_magic;    // Magic Number (0x4d5a)
+	uint16_t e_cblp;     // Bytes on last page of file
+	uint16_t e_cp;       // Pages in file
+	uint16_t e_crlc;     // Relocations
+	uint16_t e_cparhdr;  // Size of header in paragraphs
+	uint16_t e_minalloc; // Minimum extra paragraphs needed
+	uint16_t e_maxalloc; // Maximum extra paragraohs needed
+	uint16_t e_ss;       // Initial SS value
+	uint16_t e_sp;       // Initial SP value
+	uint16_t e_csum;     // Checksum
+	uint16_t e_ip;       // Initial IP value
+	uint16_t e_cs;       // Initial CS value
+	uint16_t e_lfarlc;   // File address of relocation table;
+	uint16_t e_ovno;     // Overlay number
+	uint16_t e_res[4];   // Reserved words
+	uint16_t e_oemid;    // OEM identifier
+	uint16_t e_oeminfo;  // OEM information
+	uint16_t e_res2[10]; // Reserved words
+	uint32_t e_lfnew;    // File address of new exe header(NT header) 
+};
+
+struct IMAGE_DATA_DIRECTORY{
+	uint32_t VirtualAddress; //ロードされたイメージからの先頭アドレス
+	uint32_t Size;
+};
+struct IMAGE_FILE_HEADER{
+	uint16_t Machine;              // x86(0x014c) x64(0x8664)
+	uint16_t NumberOfSections;     // セクションの数
+	uint32_t TimeDateStamp;        // Unix time
+	uint32_t PointerToSymbolTable; // 0x0000 使わない
+	uint32_t NumberOfSymbols;
+	uint16_t SizeOfOptopmalHeader; // IMAGE_OPTIONAL_HEADERのサイズ
+	uint16_t Characteristics;
+};
+#define IMAGE_NUMBEROF_DIRECTORY_ENTRIES    16
+struct IMAGE_OPTIONAL_HEADER{
+	uint16_t Magic; // PE32(0x010b) PE64(0x020b)
+	uint8_t  MajorLinkerVersion;
+	uint8_t  MinorLinlerVersion;
+	uint32_t SizeOfCode;
+	uint32_t SizeOfInitializedData;
+	uint32_t SizeOfUninitializedData;
+	uint32_t AddressOfEntryPoint; // relative virtual address
+	uint32_t BaseOfCode;
+	uint32_t BaseOfData;
+	uint32_t ImageBase; // ロードアドレス
+	uint32_t SectionAlignment;
+	uint32_t FileAlignment;
+	uint16_t MajorOperatingSystemVersion;
+	uint16_t MinorOperatingSystemVersion;
+	uint16_t MajorImageVersion;
+	uint16_t MinorImageVersion;
+	uint16_t MajorSubsystemVersion;
+	uint16_t MinorSubsystemVersion;
+	uint32_t Win32VersionValue;
+	uint32_t SizeOfImage;
+	uint32_t SizeOfHeaders;
+	uint32_t CheckSum;
+	uint16_t Subsystem;
+	uint16_t DllCharacteristics;
+	uint32_t SizeOfStackReserve;
+	uint32_t SizeOfStackCommit;
+	uint32_t SizeOfHeapReserve;
+	uint32_t SizeOfHeapCommit;
+	uint32_t LoaderFlags;
+	uint32_t NumberOfRvaAndSizes; //0x10(IMAGE_NUMBEROF_DIRECTORY_ENTRIES)
+	IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
+};
+
+struct IMAGE_NT_HEADERS {
+	uint32_t Signature; // Magic Number (0x50450000)
+	IMAGE_FILE_HEADER FileHeader;
+	IMAGE_OPTIONAL_HEADER OptionalHeader;
+};
+
+// IMAGE_SECTION_HEADER の数はIMAGE_FILE_HEADER::NumberOfSectionsで定義されている
+#define IMAGE_SIZEOF_SHORT_NAME    8
+struct IMAGE_SECTION_HEADER {
+	char Name[IMAGE_SIZEOF_SHORT_NAME];
+	union {
+		uint32_t PhysicalAddress;
+		uint32_t VirtualSize;
+	} Misc;
+	uint32_t VirtualAddress;
+	uint32_t SizeOfRawData; //このセクションのファイル中でのサイズ
+	uint32_t PointerToRawData; //このセクションのファイル中での位置
+	uint32_t PointerToRelocations;
+	uint32_t PointerToLinenumbers;
+	uint16_t NumberOfRelocations;
+	uint16_t NumberOfLinenumbers;
+	uint32_t Characteristics; // (0x00000040)セクションに初期化されたデータが含まれている
+};
+
+struct IMAGE_RESOURCE_DIRECTORY {
+	uint32_t Characteristics;
+	uint32_t TimeDateStamp;
+	uint16_t MajorVersion;
+	uint16_t MinorVersion;
+	uint16_t NumberOfNamedEntries; // IMAGE_RESOURCE_DIRECTORY_ENTRY構造体の数
+	uint16_t NumberOfIdEntries; // IMAGE_RESOURCE_DIRECTORY_ENTRY構造体の数
+//  IMAGE_RESOURCE_DIRECTORY_ENTRY DirectoryEntries[];
+};
+struct IMAGE_RESOURCE_DIRECTORY_ENTRY {
+	union {
+		struct {
+			uint32_t NameOffset:31;
+			uint32_t NameIsString:1;
+		};
+		uint32_t Name;
+		uint16_t Id;
+	};
+	union {
+		uint32_t OffsetToData;
+		struct {
+			uint32_t OffsetToDirectory:31;
+			uint32_t DataIsDirectory:1;
+		};
+	};
+};
+struct IMAGE_RESOURCE_DATA_ENTRY {
+	uint32_t OffsetToData;
+	uint32_t Size;
+	uint32_t CodePage;
+	uint32_t Reserved;
+};
+struct IMAGE_COR20_HEADER {
+	uint32_t cb;
+	uint16_t MajorRuntimeVersion;
+	uint16_t MinorRuntimeVersion;
+	IMAGE_DATA_DIRECTORY MetaData;
+	uint32_t Flags;
+	union {
+		uint32_t EntryPointToken;
+		uint32_t EntryPointRVA;
+	};
+	IMAGE_DATA_DIRECTORY Resources;
+	IMAGE_DATA_DIRECTORY StrongNameSignature;
+	IMAGE_DATA_DIRECTORY CodeManagerTable;
+	IMAGE_DATA_DIRECTORY VTableFixups;
+	IMAGE_DATA_DIRECTORY ExportAddressTableJumps;
+	IMAGE_DATA_DIRECTORY ManagedNativeHeader;
+};
+
+struct IMAGE_METADATA_ROOT {
+	uint32_t Signature; /*0x424a5342 */
+	uint16_t MajorVersion;
+	uint16_t MinorVersion;
+	uint32_t Reserved;
+	uint32_t Length;
+	// uiint8_t Version[Length];
+	// Alignment (4の倍数)
+	// uint16_t Flags;
+	// uint16_t Streams;
+};
+
+struct IMAGE_STREAM_HEADER {
+	uint32_t Offset;
+	uint32_t Size;
+	char Name[32]; // 実際のサイズはSize + alignment
+};
+
+
+void Print_IMAGE_DOS_HEADER(IMAGE_DOS_HEADER *data) {
+	printf("-----IMAGE_DOS_HEADER-----\n");
+	printf("e_magic: %x\n", data->e_magic);
+	printf("e_lfnew: %x\n", data->e_lfnew);
+	printf("\n");
+}
+void Print_IMAGE_NT_HEADERS(IMAGE_NT_HEADERS *data) {
+	printf("-----IMAGE_NT_HEADERS-----\n");
+	static const char* list[] = {
+		"EXPORT", "IMPORT", "RESORCE", "EXCEPTION", "SECURITY", "BASERELOC", "DEBUG", "ARCHITECTURE",
+		"GLOBALPTR", "TLS", "LOAD_CONFIG", "BOUND_IMPORT", "IAT", "DELAY_IMPORT", "COM_DESCRIPTOR", "Nothing"
+	};
+	printf("Signature: %x\n", data->Signature);
+	printf("Machine : %x\n", data->FileHeader.Machine);
+	printf("NumberOfSections: %x\n", data->FileHeader.NumberOfSections);
+	printf("Magic : %x\n", data->OptionalHeader.Magic);
+	printf("ImageBase : %x\n", data->OptionalHeader.ImageBase);
+	printf("SizeOfStackReserve: %x\n", data->OptionalHeader.SizeOfStackReserve);
+	printf("SizeOfStackCommit: %x\n", data->OptionalHeader.SizeOfStackCommit);
+	printf("LoaderFlags: %x\n", data->OptionalHeader.LoaderFlags);
+	printf("NumberOfRvaAndSizes : %x\n", data->OptionalHeader.NumberOfRvaAndSizes);
+	printf("---IMAGE_DATA_DIRECTORY---\n");
+	for (int i = 0; i < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++i){
+		printf("%16s : VirtualAddress : %8x size: %8x\n", list[i],
+			data->OptionalHeader.DataDirectory[i].VirtualAddress,
+			data->OptionalHeader.DataDirectory[i].Size);
+	}
+	printf("\n");
+}
+void Print_IMAGE_SECTION_HEADER(IMAGE_SECTION_HEADER *data) {
+	printf("----- %s Section -----\n", data->Name);
+	printf("VirtualAddress: %x\n", data->VirtualAddress);
+	printf("SizeOfRawData: %x\n", data->SizeOfRawData);
+	printf("PointerToRawData: %x\n", data->PointerToRawData);
+	printf("Characteristics %x\n", data->Characteristics);
+	printf("\n");
+}
+void Print_IMAGE_RESOURCE_DIRECTORY(IMAGE_RESOURCE_DIRECTORY *data) {
+	printf("NumberOfNamedEntries %x\n", data->NumberOfNamedEntries);
+	printf("NumberOfIdEntries %x\n", data->NumberOfIdEntries);
+}
+void Print_IMAGE_RESOURCE_DIRECTORY_ENTRY(IMAGE_RESOURCE_DIRECTORY_ENTRY *data){
+	printf("Id %x\n", data->Id);
+	printf("OffsetToData %x\n", data->OffsetToData);
+}
+void Print_IMAGE_COR20_HEADER(IMAGE_COR20_HEADER *data) {
+	printf("cb %x\n", data->cb);
+	printf("MetaData VA %x Size %X\n", data->MetaData.VirtualAddress, data->MetaData.Size);
+	printf("Resources VA %x Size %x\n", data->Resources.VirtualAddress, data->Resources.Size);
+}
+void Print_IMAGE_STREAM_HEADER(IMAGE_METADATA_ROOT *data) {
+	printf("Signature %x\n", data->Signature);
+	printf("Length %x\n", data->Length);
+}
+void Print_IMAGE_STREAM_HEADER(IMAGE_STREAM_HEADER *data) {
+	printf("Offset %x\n", data->Offset);
+	printf("Size %x\n", data->Size);
+}
+
+
+void PrintStringResource(uint32_t ptr, uint32_t size, char* buf) {
+	auto tmpptr = reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(ptr));
+	for (uint32_t i = 0; i < size; ++i) {
+		if((9 <= tmpptr[i] && tmpptr[i] <= 12) || (32 <= tmpptr[i] && tmpptr[i] <= 126))
+			printf("%c", tmpptr[i]);
+	}
+	printf("\n");
+	
+}
+/*
+pointが指している構造体のアドレス
+0 := IMAGE_RESOURCE_DIRECTOR 1 := IMAGE_RESOURCE_DIRECTORY_ENTRY 2 := IMAGE_RESOURCE_DATA_ENTRY
+*/
+void PurseRsrcSection(uint32_t point, uint32_t flag, IMAGE_SECTION_HEADER* ptr, char* buf) {
+	if(flag == 0){
+		/* 現在の階層のエントリポイントの数 */
+		auto tmpptr = reinterpret_cast<IMAGE_RESOURCE_DIRECTORY*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(point));
+		uint32_t size = tmpptr->NumberOfNamedEntries + tmpptr->NumberOfIdEntries;
+		point += sizeof(IMAGE_RESOURCE_DIRECTORY);
+		for (uint32_t i = 0; i < size; ++i) {
+			PurseRsrcSection(point + i * 0x8, 1, ptr, buf);
+		}
+	}else if(flag == 1) {
+		auto tmpptr = reinterpret_cast<IMAGE_RESOURCE_DIRECTORY_ENTRY*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(point));
+		if(tmpptr->DataIsDirectory == 1) 
+			PurseRsrcSection(tmpptr->OffsetToDirectory + ptr->PointerToRawData, 0, ptr, buf);
+		else if(tmpptr->DataIsDirectory == 0)
+			PurseRsrcSection(tmpptr->OffsetToDirectory + ptr->PointerToRawData, 2, ptr, buf);
+	}else if(flag == 2) {
+		auto tmpptr = reinterpret_cast<IMAGE_RESOURCE_DATA_ENTRY*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(point));
+		PrintStringResource(tmpptr->OffsetToData + ptr->PointerToRawData - ptr->VirtualAddress, tmpptr->Size, buf);
+		return;
+	}
+}
+
+void PurseTextSectionMetadata(IMAGE_DATA_DIRECTORY data, IMAGE_SECTION_HEADER* SHptr, char* buf) {
+	printf("======TextSectionMetadata======\n");
+	uint32_t rva = data.VirtualAddress;
+	uint32_t Start = rva + SHptr->PointerToRawData - SHptr->VirtualAddress; /* メタデータルートの先頭 */
+	auto ptr1 = reinterpret_cast<IMAGE_METADATA_ROOT*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(Start));
+	uint32_t Length = ptr1->Length;
+	uint32_t Alignment = Length % 4 ? 4 - Length % 4 : 0;
+	const uint32_t Offset = 0x12;
+
+	/* 可変長構造体なので, メンバ変数Stremsの位置を計算 */
+	auto ptr2 = reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(Start) + Offset + Length + Alignment);
+	uint16_t Strems = ptr2[0] + ptr2[1] * 0x16; /* ストリームの数 */
+	ptr2 += 2;
+	auto streamptr = reinterpret_cast<IMAGE_STREAM_HEADER*>(ptr2);
+	for (int i = 0; i < Strems; ++i) {
+		uint32_t offset = streamptr->Offset, size = streamptr->Size;
+		if(!strcmp(streamptr->Name, "#Strings") || !strcmp(streamptr->Name, "#US")) {
+			PrintStringResource(Start + offset, size, buf);
+		}
+		uint32_t NameSize = strlen(streamptr->Name) + 1;
+		uint32_t NameAlignment = NameSize % 4 ? 4 - NameSize % 4 : 0;
+		streamptr = reinterpret_cast<IMAGE_STREAM_HEADER*>(reinterpret_cast<uintptr_t>(streamptr) + 0x8 + NameSize + NameAlignment);
+	}
+	printf("\n");
+}
+
+void PurseTextSectionResources(IMAGE_DATA_DIRECTORY data, IMAGE_SECTION_HEADER* ptr, char* buf) {
+	printf("=====TextSectionResources======\n");
+	uint32_t rva = data.VirtualAddress, size = data.Size;
+	PrintStringResource(rva + ptr->PointerToRawData - ptr->VirtualAddress, size, buf);
+	printf("\n");
+}
+
+void PuserTextSection(IMAGE_SECTION_HEADER* ptr, char* buf) {
+	auto CLIheader = reinterpret_cast<IMAGE_COR20_HEADER*>(reinterpret_cast<uintptr_t>(buf) + static_cast<uintptr_t>(ptr->PointerToRawData) + 0x8);
+	PurseTextSectionResources(CLIheader->Resources, ptr, buf);
+	PurseTextSectionMetadata(CLIheader->MetaData, ptr, buf);
+}
+
+int main(int argc, char const *argv[]) {
+	if(argc < 2){ 
+		printf("Usage: ./a.out PEfile\n");
+		return -1;
+	}
+
+	/* argv[1] で指定されたファイルをバイナリ形式かつ入力専用で開く */
+	std::ifstream ifs(argv[1], std::ios::binary | std::ios::in);
+	if(!ifs){ return -1; }
+	ifs.seekg(0,std::ios::end);
+	int size = static_cast<int>(ifs.tellg());
+	ifs.seekg(0, std::ios_base::beg);
+	char *buf = new char[size + 1];
+	ifs.read(buf, size);
+
+	/* ファイルの先頭から MS-DOSヘッダーが始まる */
+	IMAGE_DOS_HEADER *PIMAGE_DOS_HEADER = reinterpret_cast<IMAGE_DOS_HEADER*>(buf);
+	#ifdef DEBUG
+		Print_IMAGE_DOS_HEADER(PIMAGE_DOS_HEADER);
+	#endif
+
+	/* ファイルの先頭からe_lfnewを足せば, NTヘッダーの先頭アドレス */
+	IMAGE_NT_HEADERS *PIMAGE_NT_HEADERS = 
+	reinterpret_cast<IMAGE_NT_HEADERS*>(buf + PIMAGE_DOS_HEADER->e_lfnew);
+	#ifdef DEBUG
+		Print_IMAGE_NT_HEADERS(PIMAGE_NT_HEADERS);
+	#endif
+
+	/* セクションデータはNTヘッダーの直下にくる */
+	IMAGE_SECTION_HEADER *PIMAGE_SECTION_HEADER = 
+	reinterpret_cast<IMAGE_SECTION_HEADER *>(reinterpret_cast<uintptr_t>(PIMAGE_NT_HEADERS) + reinterpret_cast<uintptr_t>(sizeof(IMAGE_NT_HEADERS)));
+	/* セクションの数だけ順番に見ていく */
+	int SectionSize = PIMAGE_NT_HEADERS->FileHeader.NumberOfSections;
+	for (int i = 0; i < SectionSize; ++i) {
+		#ifdef DEBUG
+			Print_IMAGE_SECTION_HEADER(PIMAGE_SECTION_HEADER);
+		#endif
+		if(!strcmp(PIMAGE_SECTION_HEADER->Name, ".text"))
+			PuserTextSection(PIMAGE_SECTION_HEADER, buf);
+		else if (!strcmp(PIMAGE_SECTION_HEADER->Name, ".rsrc")){
+			printf("======ResourcesDirectory=====\n");
+			PurseRsrcSection(PIMAGE_SECTION_HEADER->PointerToRawData, 0, PIMAGE_SECTION_HEADER, buf);
+			printf("\n");
+		}
+		PIMAGE_SECTION_HEADER++;
+	}
+
+	delete[] buf;
+	return 0;
+}
+
+このプログラム(purse.cpp)を, gcc -std=c++11 -Wall purse.cpp でコンパイルして ./a.out kadai.exe 実行すると, 
+-----IMAGE_DOS_HEADER-----
+e_magic: 5a4d
+e_lfnew: 80
+
+-----IMAGE_NT_HEADERS-----
+Signature: 4550
+Machine : 14c
+NumberOfSections: 3
+Magic : 10b
+ImageBase : 400000
+SizeOfStackReserve: 100000
+SizeOfStackCommit: 1000
+LoaderFlags: 0
+NumberOfRvaAndSizes : 10
+---IMAGE_DATA_DIRECTORY---
+          EXPORT : VirtualAddress :        0 size:        0
+          IMPORT : VirtualAddress :     2e1c size:       4f
+         RESORCE : VirtualAddress :     4000 size:      590
+       EXCEPTION : VirtualAddress :        0 size:        0
+        SECURITY : VirtualAddress :        0 size:        0
+       BASERELOC : VirtualAddress :     6000 size:        c
+           DEBUG : VirtualAddress :     2d7c size:       1c
+    ARCHITECTURE : VirtualAddress :        0 size:        0
+       GLOBALPTR : VirtualAddress :        0 size:        0
+             TLS : VirtualAddress :        0 size:        0
+     LOAD_CONFIG : VirtualAddress :        0 size:        0
+    BOUND_IMPORT : VirtualAddress :        0 size:        0
+             IAT : VirtualAddress :     2000 size:        8
+    DELAY_IMPORT : VirtualAddress :        0 size:        0
+  COM_DESCRIPTOR : VirtualAddress :     2008 size:       48
+         Nothing : VirtualAddress :        0 size:        0
+
+----- .text Section -----
+VirtualAddress: 2000
+SizeOfRawData: 1000
+PointerToRawData: 200
+Characteristics 60000020
+
+=====TextSectionResources======
++lSystem.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089#System.Resources.RuntimeResourceSetPADPADPabc&String1String2String3
+                                                                         Hello world!	hoge fuga
+                                                                                                 string test
+
+======TextSectionMetadata======
+<Module>ConsoleApplication1.exeProgramConsoleApplication1ResourcesConsoleApplication1.PropertiesmscorlibSystemObjectMain.ctorSystem.ResourcesResourceManagerresourceManSystem.GlobalizationCultureInforesourceCultureget_ResourceManagerget_Cultureset_Cultureget_String1get_String2get_String3CultureString1String2String3argsvalueSystem.ReflectionAssemblyTitleAttributeAssemblyDescriptionAttributeAssemblyConfigurationAttributeAssemblyCompanyAttributeAssemblyProductAttributeAssemblyCopyrightAttributeAssemblyTrademarkAttributeAssemblyCultureAttributeSystem.Runtime.InteropServicesComVisibleAttributeGuidAttributeAssemblyVersionAttributeAssemblyFileVersionAttributeSystem.Runtime.VersioningTargetFrameworkAttributeSystem.DiagnosticsDebuggableAttributeDebuggingModesSystem.Runtime.CompilerServicesCompilationRelaxationsAttributeRuntimeCompatibilityAttributeConsoleWriteLineSystem.CodeDom.CompilerGeneratedCodeAttributeDebuggerNonUserCodeAttributeCompilerGeneratedAttributeReferenceEqualsTypeRuntimeTypeHandleGetTypeFromHandleAssemblyget_AssemblyGetStringSystem.ComponentModelEditorBrowsableAttributeEditorBrowsableStateConsoleApplication1.Properties.Resources.resources
+QConsoleApplication1.Properties.ResourcesString1String2String3
+
+----- .rsrc Section -----
+VirtualAddress: 4000
+SizeOfRawData: 600
+PointerToRawData: 1200
+Characteristics 40000040
+
+======ResourcesDirectory=====
+4VS_VERSION_INFO?DVarFileInfo$Translation`StringFileInfo<000004b0PFileDescriptionConsoleApplication10FileVersion1.0.0.0PInternalNameConsoleApplication1.exeHLegalCopyrightCopyright   2017XOriginalFilenameConsoleApplication1.exeHProductNameConsoleApplication14ProductVersion1.0.0.08Assembly Version1.0.0.0
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="MyApplication.app"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
+
+
+----- .reloc Section -----
+VirtualAddress: 6000
+SizeOfRawData: 200
+PointerToRawData: 1800
+Characteristics 42000040
+
+
+以上のような出力結果がでた.
+実際の課題のプログラムを実行すると表示される文字列 Hello world! hoge fuga string test も表示されている.
