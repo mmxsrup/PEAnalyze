@@ -735,7 +735,7 @@ int main(int argc, char const *argv[]) {
 	return 0;
 }
 
-このプログラム(purse.cpp)を, gcc -std=c++11 -Wall purse.cpp でコンパイルして ./a.out kadai.exe 実行すると, 
+このプログラム(purse.cpp) (https://github.com/mmxsrup/PEAnalyze/blob/master/purse.cpp) を, gcc -std=c++11 -Wall purse.cpp でコンパイルして ./a.out kadai.exe 実行すると, 
 -----IMAGE_DOS_HEADER-----
 e_magic: 5a4d
 e_lfnew: 80
