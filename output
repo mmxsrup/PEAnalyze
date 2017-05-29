@@ -1,0 +1,22 @@
+=====TextSectionResources======
++lSystem.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089#System.Resources.RuntimeResourceSetPADPADPabc&String1String2String3Hello world!	hoge fugastring test
+
+======TextSectionMetadata======
+<Module>ConsoleApplication1.exeProgramConsoleApplication1ResourcesConsoleApplication1.PropertiesmscorlibSystemObjectMain.ctorSystem.ResourcesResourceManagerresourceManSystem.GlobalizationCultureInforesourceCultureget_ResourceManagerget_Cultureset_Cultureget_String1get_String2get_String3CultureString1String2String3argsvalueSystem.ReflectionAssemblyTitleAttributeAssemblyDescriptionAttributeAssemblyConfigurationAttributeAssemblyCompanyAttributeAssemblyProductAttributeAssemblyCopyrightAttributeAssemblyTrademarkAttributeAssemblyCultureAttributeSystem.Runtime.InteropServicesComVisibleAttributeGuidAttributeAssemblyVersionAttributeAssemblyFileVersionAttributeSystem.Runtime.VersioningTargetFrameworkAttributeSystem.DiagnosticsDebuggableAttributeDebuggingModesSystem.Runtime.CompilerServicesCompilationRelaxationsAttributeRuntimeCompatibilityAttributeConsoleWriteLineSystem.CodeDom.CompilerGeneratedCodeAttributeDebuggerNonUserCodeAttributeCompilerGeneratedAttributeReferenceEqualsTypeRuntimeTypeHandleGetTypeFromHandleAssemblyget_AssemblyGetStringSystem.ComponentModelEditorBrowsableAttributeEditorBrowsableStateConsoleApplication1.Properties.Resources.resources
+QConsoleApplication1.Properties.ResourcesString1String2String3
+
+======ResourcesDirectory=====
+4VS_VERSION_INFO?DVarFileInfo$Translation`StringFileInfo<000004b0PFileDescriptionConsoleApplication10FileVersion1.0.0.0PInternalNameConsoleApplication1.exeHLegalCopyrightCopyright   2017XOriginalFilenameConsoleApplication1.exeHProductNameConsoleApplication14ProductVersion1.0.0.08Assembly Version1.0.0.0
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="MyApplication.app"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
+
+

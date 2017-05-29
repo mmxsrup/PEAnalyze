@@ -4,7 +4,7 @@
 #include <cstring>
 #include <string>
 
-#define DEBUG
+//#define DEBUG
 
 struct IMAGE_DOS_HEADER {
 	uint16_t e_magic;    // Magic Number (0x4d5a)
